@@ -1,0 +1,212 @@
+from typing import Optional
+
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+
+from .utils import masked_mean
+
+
+class GPTLMLoss(nn.Module):
+    """
+    GPT Language Model Loss
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.IGNORE_INDEX = -100
+        self.loss = nn.CrossEntropyLoss(ignore_index=self.IGNORE_INDEX)
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        # Flatten the tokens
+        return self.loss(shift_logits.view(-1, shift_logits.size(-1)), shift_labels.view(-1))
+
+
+class RRHFLoss(nn.Module):
+    """
+    RRHF Language Model Loss
+    """
+
+    def __init__(self):
+        super().__init__()
+        self.IGNORE_INDEX = -100
+
+    def RRHF(self, chosen_reward, reject_reward):
+        return torch.sum(F.relu(reject_reward - chosen_reward))
+
+    def pair_wise(self, chosen_reward, reject_reward):
+        return -F.logsigmoid(chosen_reward - reject_reward).mean()
+
+    def forward(self, logits: torch.Tensor, labels: torch.Tensor) -> torch.Tensor:
+        shift_logits = logits[..., :-1, :].contiguous()
+        shift_labels = labels[..., 1:].contiguous()
+        shift_logits = F.log_softmax(shift_logits, dim=-1)
+
+        mask = (shift_labels != self.IGNORE_INDEX).float()
+        new_logits = shift_logits.clone()  # Create a copy to avoid in-place modification
+        shift_labels[shift_labels == self.IGNORE_INDEX] = 0
+        output = torch.gather(new_logits, dim=-1, index=shift_labels.unsqueeze(-1)).squeeze(-1)
+        output = output * mask
+
+        length = mask.sum(-1)
+        scores = output.sum(-1) / length
+        return self.RRHF(scores[:int(scores.shape[0]/2)], scores[int(scores.shape[0]/2):])
+        #return self.pair_wise(scores[:int(scores.shape[0] / 2)], scores[int(scores.shape[0] / 2):])
+
+
+class PolicyLoss(nn.Module):
+    """
+    Policy Loss for PPO
+    """
+
+    def __init__(self, clip_eps: float = 0.2) -> None:
+        super().__init__()
+        self.clip_eps = clip_eps
+
+    def forward(
+        self,
+        log_probs: torch.Tensor,
+        old_log_probs: torch.Tensor,
+        advantages: torch.Tensor,
+        action_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        ratio = (log_probs - old_log_probs).exp()
+        surr1 = ratio * advantages
+        surr2 = ratio.clamp(1 - self.clip_eps, 1 + self.clip_eps) * advantages
+        loss = -torch.min(surr1, surr2)
+        loss = masked_mean(loss, action_mask)
+        return loss.mean()
+
+
+class ValueLoss(nn.Module):
+    """
+    Value Loss for PPO
+    """
+
+    def __init__(self, clip_eps: float = None) -> None:
+        super().__init__()
+        self.clip_eps = clip_eps
+
+    def forward(
+        self,
+        values: torch.Tensor,
+        old_values: torch.Tensor,
+        returns: torch.Tensor,
+        action_mask: Optional[torch.Tensor] = None,
+    ) -> torch.Tensor:
+        if self.clip_eps is not None:
+            values_clipped = old_values + (values - old_values).clamp(-self.clip_eps, self.clip_eps)
+            surr1 = (values_clipped - returns) ** 2
+            surr2 = (values - returns) ** 2
+            loss = torch.max(surr1, surr2)
+        else:
+            loss = (values - returns) ** 2
+
+        loss = masked_mean(loss, action_mask)
+        return 0.5 * loss.mean()
+
+
+class PairWiseLoss(nn.Module):
+    """
+    Pairwise Loss for Reward Model
+    """
+
+    def forward(
+        self, chosen_reward: torch.Tensor, reject_reward: torch.Tensor, margin: torch.Tensor = None
+    ) -> torch.Tensor:
+        if margin is not None:
+            loss = -F.logsigmoid(chosen_reward - reject_reward - margin).mean()
+        else:
+            loss = -F.logsigmoid(chosen_reward - reject_reward).mean()
+        return loss
+
+
+class RMRankLoss(nn.Module):
+    """
+    Pairwise Loss for Reward Model
+    """
+
+    def forward(
+        self, chosen_reward: torch.Tensor, reject_reward: torch.Tensor, margin: torch.Tensor = None
+    ) -> torch.Tensor:
+        if margin is not None:
+            loss = torch.sum(F.relu(reject_reward - chosen_reward + margin))
+        else:
+            loss = torch.sum(F.relu(reject_reward - chosen_reward))
+        return loss
+
+
+class MentalPairWiseLoss(nn.Module):
+    """
+    Pairwise Loss for Reward Model
+    """
+
+    def forward(
+        self, response1_reward: torch.Tensor, response2_reward: torch.Tensor, rank_reverse: torch.Tensor,
+            zero_pointer: torch.Tensor, margin: torch.Tensor
+    ) -> torch.Tensor:
+        residual = response1_reward-response2_reward
+        residual = residual*rank_reverse
+        if margin is not None:
+            residual = residual - margin
+            loss = (-F.logsigmoid(residual) * (1 - zero_pointer)).sum()/(1e-6+(1 - zero_pointer).sum())
+            #loss = (-F.logsigmoid(residual) * (1-zero_pointer) + torch.square(residual)*zero_pointer).mean()
+            #loss = -F.logsigmoid(chosen_reward - reject_reward - margin).mean()
+        else:
+            loss = (-F.logsigmoid(residual) * (1 - zero_pointer)).sum()
+            #loss = (-F.logsigmoid(residual) * (1 - zero_pointer) + torch.square(residual) * zero_pointer).mean()
+            #loss = -F.logsigmoid(chosen_reward - reject_reward).mean()
+        return loss
+
+
+class LogExpLoss(nn.Module):
+    """
+    Pairwise Loss for Reward Model
+    Details: https://arxiv.org/abs/2204.05862
+    """
+
+    def forward(
+        self, chosen_reward: torch.Tensor, reject_reward: torch.Tensor, margin: torch.Tensor = None
+    ) -> torch.Tensor:
+        loss = torch.log(1 + torch.exp(reject_reward - chosen_reward)).mean()
+        return loss
+
+
+class DPOLoss(nn.Module):
+    """
+    DPO Loss
+    """
+
+    def __init__(self, beta: float, label_smoothing: float = 0.0, ipo: bool = False) -> None:
+        super().__init__()
+        self.beta = beta
+        self.label_smoothing = label_smoothing
+        self.ipo = ipo
+
+    def forward(
+        self,
+        policy_chosen_logps: torch.Tensor,
+        policy_rejected_logps: torch.Tensor,
+        reference_chosen_logps: torch.Tensor,
+        reference_rejected_logps: torch.Tensor,
+    ) -> torch.Tensor:
+        pi_logratios = policy_chosen_logps - policy_rejected_logps
+        ref_logratios = reference_chosen_logps - reference_rejected_logps
+        logits = pi_logratios - ref_logratios
+
+        if self.ipo:
+            losses = (logits - 1 / (2 * self.beta)) ** 2  # Eq. 17 of https://arxiv.org/pdf/2310.12036v2.pdf
+        else:
+            # Eq. 3 https://ericmitchell.ai/cdpo.pdf; label_smoothing=0 gives original DPO (Eq. 7 of https://arxiv.org/pdf/2305.18290.pdf)
+            losses = (
+                -F.logsigmoid(self.beta * logits) * (1 - self.label_smoothing)
+                - F.logsigmoid(-self.beta * logits) * self.label_smoothing
+            )
+
+        loss = losses.mean()
+        chosen_rewards = self.beta * (policy_chosen_logps - reference_chosen_logps).detach()
+        rejected_rewards = self.beta * (policy_rejected_logps - reference_rejected_logps).detach()
+
+        return loss, chosen_rewards, rejected_rewards
