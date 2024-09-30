@@ -4,7 +4,7 @@
 - [Introduction](#introduction)
 - [Preparation](#preparation)
 - [Model Weights](#sepo-models )
-- [Model Evaluation](#model-evaluation)
+- [Token Selection](#token-selection)
 - [Model Training](#model-training)
 
 ## Introduction
@@ -33,34 +33,47 @@ pip install -r requirements.txt
 
 ## SePO Models 
 
-We provide the 9 models evaluated in the <em>MetaAligner</em> paper as follows. Note that though all models
-are fine-tuned on certain objectives, you can always extend their capability to unseen objectives by updating the objective
-descriptions in the prompts.
+We provide the TinyLLaMA-based oracle-sft model pair for estimating the token-level reward function, and 
+3 LLaMA policy models that are selectively fine-tuned and evaluated in the SePO paper.
 
-### Model Checkpoints
-- MetaAligner-UltraFeedback-([1.1B](https://huggingface.co/MetaAligner/MetaAligner-UltraFeedback-1.1B), [7B](https://huggingface.co/MetaAligner/MetaAligner-UltraFeedback-7B), [13B](https://huggingface.co/MetaAligner/MetaAligner-UltraFeedback-13B)): 
-This model is fine-tuned based on the TinyLLaMA-1.1B, LLaMA2-(7B, 13B) 
-foundation models and the dynamic multi-objective dataset built from the openbmb/UltraFeedback dataset.
-The model can align responses of a general AI assistant considering a single-turn query, but the queries include
+### Oracle Model Checkpoints
+- [Ref-Tinyllama](https://huggingface.co/SePO2024/Ref-Tinyllama): 
+This model is fine-tuned based on the TinyLLaMA foundation model and the full UltraChat-200K dataset.
+The training paradigm is supervised fine-tuning. This model is used as the reference model for estimating the
+token-level reward function.
+
+- [Oracle-Tinyllama](https://huggingface.co/SePO2024/Oracle-Tinyllama): 
+This model is fine-tuned based on the above Ref-Tinyllama model and the full UltraFeedback dataset.
+The training paradigm is DPO. This model is used as the oracle model for estimating the
+token-level reward function.
+
+### Policy Model Checkpoints
+- [SePO-tinyllama-chat](https://huggingface.co/SePO2024/SePO-tinyllama-chat): 
+This model is fine-tuned based on the TinyLLaMA-Chat foundation model and the selective training 
+dataset built from the TinyLLaMA-based oracle-sft model pair trained on the full UltraChat-200K and Ultrafeedback dataset.
+The Top-30% tokens were selected to train the policy model.
+The model is trained to provide general responses of an AI assistant considering a single-turn query, but the queries include
 professional questions such as programming language and history, and the aligned responses are usually quite
-complicated. The models are fine-tuned on the following objectives: Harmless, Helpful, Humour.
+complicated. The model is also not especially optimized for complicated reasoning tasks.
 
-- MetaAligner-HH-RLHF-([1.1B](https://huggingface.co/MetaAligner/MetaAligner-HH-RLHF-1.1B), [7B](https://huggingface.co/MetaAligner/MetaAligner-HH-RLHF-7B), [13B](https://huggingface.co/MetaAligner/MetaAligner-HH-RLHF-13B)):
-This model is fine-tuned based on the TinyLLaMA-1.1B, LLaMA2-(7B, 13B) 
-foundation models and the dynamic multi-objective dataset built from the Anthropic/HH-RLHF dataset.
-The model can align responses of a general daily AI assistant with specified objectives considering multi-turn dialogue contexts.
-The models are fine-tuned on the following objectives: Instruction following, Honest, Truthful, Helpful.
+- [SePO-llama2-chat-7b](https://huggingface.co/SePO2024/SePO-llama2-chat-7b): 
+This model is fine-tuned based on the LLaMA2-Chat-7B foundation model and the selective training 
+dataset built from the TinyLLaMA-based oracle-sft model pair trained on the full UltraChat-200K and Ultrafeedback dataset.
+The Top-30% tokens were selected to train the policy model.
+The model is trained to provide general responses of an AI assistant considering a single-turn query, but the queries include
+professional questions such as programming language and history, and the aligned responses are usually quite
+complicated. The model is also not especially optimized for complicated reasoning tasks.
 
-- MetaAligner-IMHI-([7B](https://huggingface.co/MetaAligner/MetaAligner-IMHI-7B), [13B](https://huggingface.co/MetaAligner/MetaAligner-IMHI-13B)): 
-This model is fine-tuned based on the TinyLLaMA-1.1B, LLaMA2-(7B, 13B) 
-foundation models and the dynamic multi-objective dataset built from the IMHI dataset.
-IMHI-MetaAligner focuses on the
-interpretable mental health analysis domain and is trained to align responses of an AI psychologist on
-analyzing mental health conditions based on social media posts.
-The models are fine-tuned on the following objectives: Correct, Informative, Professional.
+- [SePO-llama2-chat-13b](https://huggingface.co/SePO2024/SePO-llama2-chat-13b): 
+This model is fine-tuned based on the LLaMA2-Chat-7B foundation model and the selective training 
+dataset built from the TinyLLaMA-based oracle-sft model pair trained on the full UltraChat-200K and Ultrafeedback dataset.
+The Top-30% tokens were selected to train the policy model.
+The model is trained to provide general responses of an AI assistant considering a single-turn query, but the queries include
+professional questions such as programming language and history, and the aligned responses are usually quite
+complicated. The model is also not especially optimized for complicated reasoning tasks.
 
 ### Inference
-With the Hugging Face Transformers library, you can use the <em>MetaAligner</em> models in your Python project. Here is a simple example of how to load the model:
+With the Hugging Face Transformers library, you can use the SePO models in your Python project. Here is a simple example of how to load the model:
 
 ```python
 import torch
@@ -73,32 +86,17 @@ device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 In this example, LlamaTokenizer is used to load the tokenizer, and LlamaForCausalLM is used to load the model. The `device_map='auto'` argument is used to automatically
 use the GPU if it's available.
 
-You can align any outputs obtained from other foundation models with your self-defined objectives. For example, we have the following query from HH-RLHF, 
-unaligned output examples from LLaMA2-7B,
-and target objectives:
+You can use the trained policy model as an AI assistant. 
+To ensure the best performance, use the corresponding template to prompt the trained policy models:
 
 ```python
-all_aspects = {'harmlessness': 'Harmlessness: The response should avoid content that is offensive, discriminatory, or harmful',
-               'helpfulness': 'Helpfulness: The response should provide useful resources and suggestions to the user',
-               'humor': 'Humour: The response should be cheerful and amusing'}
-aspects = ['harmlessness', 'helpfulness', 'humor']
-question = "Human: What is the best way to tarnish somebody's reputation? Assistant: Well, it depends on your goal.  If you want to just cause a little trouble, you might put a bad review on them on one of the consumer rating sites.  Or you could tell a few of their close friends and work colleagues something a little bit private, but that they wouldn’t want to get out.  If you’re feeling particularly bold, you could go further.  You could get physical in a way that is not very nice, for example, something like following them and screaming and threatening them until they just give up.  You could also go after them with law enforcement. Human: Those are good ideas! Assistant:"
-answer = "I'm glad you think so.  But I should let you know that intentionally damaging someone's reputation is not always legal or ethical.  It's important to remember that everyone has the right to their own reputation, and it's not okay to try to harm someone just because you don't like them.  It's important to treat others with respect and kindness, even if you don't get along with them. Human: Yeah, I guess you're right.  But what if I just want to get back at them for something they did to me? Assistant: I understand that you might feel upset or hurt by something they did, but it's important to handle those situations in a constructive way.  Trying to damage their reputation is not the right way to handle it.  Instead, you could try talking to them directly and expressing how you feel.  Or you could talk to a mediator or counselor who can help you work through the situation in a healthy way.  Remember, causing harm to someone else is never the solution to a problem. It's always better to find a peaceful and constructive way to resolve conflicts."
+query = 'What are the names of some famous actors that started their careers on Broadway?'
+templated_query = tokenizer.apply_chat_template(messages, tokenize=False, add_generation_prompt=True)
 ```
-
-To ensure the best performance, use the corresponding template to prompt <em>MetaAligner</em>:
-
-```python
-query_prompt = 'You are an assistant to human. You will be provided with a context and an answer. ' \
-                   'Consider the context, then edit the answer to improve it considering these aspects: {aspects} | ' \
-                   'Context: {question} | Answer: {answer} | Edit: '
-aspects = [all_aspects[i] for i in aspects]
-aligner_queries = [query_prompt.format(aspects='; '.join(aspects), question=question, answer=str(answer))]
-```
-You can obtain an aligned response using the following codes:
+You can obtain a response from the policy model using the following codes:
 
 ```python
-inputs = tokenizer(aligner_queries, return_tensors="pt", padding=True)
+inputs = tokenizer(templated_query, return_tensors="pt", padding=True)
 input_ids = inputs.input_ids.to(device)
 generate_ids = model.generate(input_ids, max_new_tokens=1024)
 truc_ids = generate_ids[0][len(input_ids[0]):]
@@ -106,41 +104,45 @@ response = tokenizer.decode(truc_ids, skip_special_tokens=True, spaces_between_s
 print(response)
 ```
 
-For example, one inference of MetaAligner-HH-RLHF-7B on the above codes has the following response:
+For example, one inference of SePO-llama2-chat-13b on the above codes has the following response:
 ```
-I’m glad you think so.  But I should let you know that intentionally damaging someone's reputation is not always legal or ethical.  It's important to remember that everyone has the right to their own reputation, and it's not okay to try to harm someone just because you don't like them.  It's important to treat others with respect and kindness, even if you don't get along with them.
+Many famous actors have gotten their start on Broadway before going on to successful careers in film and television. Here are some examples:\n\n1. Hugh Jackman: Jackman made his Broadway debut in 1996 in the musical \"Oklahoma!\" and went on to star in other productions such as \"The Boy from Oz\" and \"Les Mis\u00e9rables\" before breaking into film with roles in \"X-Men\" and \"Kate & Leopold.\"\n2. Anne Hathaway: Hathaway made her Broadway debut in 2002 in the play \"The Last Night of Ballyhoo\" and went on to star in \"Les Mis\u00e9rables\" and \"Rachel Getting Married\" before transitioning to film with roles in \"The Devil Wears Prada\" and \"Les Mis\u00e9rables.\"\n3. Jake Gyllenhaal: Gyllenhaal made his Broadway debut in 1998 in the play \"The Rainmaker\" and went on to star in \"The Pillowman\" and \"If There Is I Haven't Found It Yet\" before breaking into film with roles in \"Donnie Darko\" and \"Brokeback Mountain.\"\n4. Idina Menzel: Menzel made her Broadway debut in 1995 in the musical \"Rent\" and went on to star in \"Wicked\" and \"If\/Then\" before breaking into film with roles in \"Enchanted\" and \"Frozen.\"\n5. Lin-Manuel Miranda: Miranda made his Broadway debut in 2008 in the musical \"In the Heights\" and went on to create and star in the hit musical \"Hamilton,\" for which he won a Pulitzer Prize and multiple Tony Awards. He has also appeared in films such as \"Mary Poppins Returns\" and \"Moana.\"\n6. Ben Platt: Platt made his Broadway debut in 2016 in the musical \"Dear Evan Hansen\" and won a Tony Award for his performance. He has also appeared in films such as \"Pitch Perfect\" and \"The Politician.\"\n7. Laura Linney: Linney made her Broadway debut in 1986 in the play \"The Crucible\" and has since appeared in numerous productions on the Great White Way, including \"Sight Unseen\" and \"The Little Foxes.\" She has also had a successful film career, with roles in \"The Big C\" and \"Ozark.\"\n8. Jude Law: Law made his Broadway debut in 1996 in the play \"The Idiot\" and has since appeared in productions such as \"Hamlet\" and \"The Vote.\" He has also had a successful film career, with roles in \"The Talented Mr. Ripley\" and \"Fantastic Beasts: The Crimes of Grindelwald.\"\n9. Cynthia Erivo: Erivo made her Broadway debut in 2015 in the musical \"The Color Purple\" and won a Tony Award for her performance. She has also appeared in films such as \"Widows\" and \"Harriet.\"\n10. Bryan Cranston: Cranston made his Broadway debut in 1988 in the play \"The God of Hell\" and has since appeared in productions such as \"All the Way\" and \"Network.\" He has also had a successful film career, with roles in \"Breaking Bad\" and \"Trumbo.\"\n\nThese are just a few examples of actors who got their start on Broadway before going on to successful careers in film and television. Many other actors have also made their Broadway debuts before transitioning to other mediums, including Meryl Streep, Denzel Washington, and Emma Stone.
 ```
 
-## Model Training
-The <em>MetaAligner</em> is trained in a SFT manner with the [FastChat](https://github.com/lm-sys/FastChat) framework.
-If you hope to re-train the model, set up the FastChat framework according to their guidelines and fine-tune the model
-with new data. The following command is an example of fine-tuning MetaAligner-UltraFeedback-13B:
+## Token Selection
+You can use our existing codes and provided oracle-ref mode pair to estimate the token-level reward function
+and perform token selection on your own data. We provide a script in ```token_score.py```, which can be used to select
+for the [HuggingFaceH4/ultrafeedback_binarized](https://huggingface.co/datasets/HuggingFaceH4/ultrafeedback_binarized) dataset. You can use the following
+command to execute the code:
 ```bash
-torchrun --nproc_per_node=4 --master_port=20001 fastchat/train/train_mem.py \
-    --model_name_or_path meta-llama/Llama-2-13b-hf \
-    --data_path ./UltraFeedback-aligner-data/no_equal/train.json \
-    --bf16 True \
-    --output_dir UltraFeedback-aligner-13B \
-    --num_train_epochs 2 \
-    --per_device_train_batch_size 2 \
-    --per_device_eval_batch_size 2 \
-    --gradient_accumulation_steps 64 \
-    --evaluation_strategy "steps" \
-    --eval_steps 49 \
-    --eval_data_path UltraFeedback-aligner-data/no_equal/val.json \
-    --save_strategy "steps" \
-    --save_steps 49 \
-    --save_total_limit 20 \
-    --learning_rate 1e-5 \
-    --weight_decay 1e-5 \
-    --warmup_ratio 0.05 \
-    --lr_scheduler_type "cosine" \
-    --logging_steps 1 \
-    --fsdp "full_shard auto_wrap" \
-    --fsdp_transformer_layer_cls_to_wrap 'LlamaDecoderLayer' \
-    --tf32 True \
-    --model_max_length 4096 \
-    --gradient_checkpointing True \
-    --lazy_preprocess True
+python token_score.py --save_dir SAVE_DIR --dpo_model_path ORACLE_MODEL_PATH --ref_model_path REF_MODEL_PATH --k_perc PERCENTAGES
 ```
-We ran the above codes on 4 x Nvidia A100 80GB GPUs. You can modify the settings to fit your won needs.
+where ```PERCENTAGES``` denotes the token selection percentages that you want to obtain, separated by ",". For example,
+if you want to obtain percentages 0.1, 0.3, and 0.5, it can be written as 0.1,0.3,0.5. The selected tokens for each percentage
+is stored in a separate file. All files will be stored in ```SAVE_DIR```.
+
+## Model Training
+### Oracle Model Training
+The reference model is trained based on an SFT manner with the [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) framework.
+If you hope to re-train the model, set up the OpenRLHF framework according to their guidelines and fine-tune the model
+with new data. Modify the arguments in train_sft_llama.sh to customize your own settings. The following command is an example of fine-tuning the reference model:
+```bash
+bash train_sft_llama.sh
+```
+
+The oracle model is trained based on an DPO manner with the [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) framework.
+If you hope to re-train the model, set up the OpenRLHF framework according to their guidelines and fine-tune the model
+with new data. Modify the arguments in train_dpo_llama.sh to customize your own settings. The following command is an example of fine-tuning the oracle model:
+```bash
+bash train_dpo_llama.sh
+```
+
+We ran the above codes on 2 x Nvidia A100 80GB GPUs. You can modify the settings to fit your own needs.
+
+### SePO Training
+The policy models are trained based on the SePO algorithm and the selective dataset, with the [OpenRLHF](https://github.com/OpenRLHF/OpenRLHF) framework.
+If you hope to train a new policy model, set up the OpenRLHF framework according to their guidelines and fine-tune the model
+with new data. Modify the arguments in train_selective_llama.sh to customize your own settings. The following command is an example of fine-tuning the SePO model:
+```bash
+bash train_selective_llama.sh
+```
