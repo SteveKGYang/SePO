@@ -78,8 +78,8 @@ With the Hugging Face Transformers library, you can use the SePO models in your 
 ```python
 import torch
 from transformers import LlamaTokenizer, LlamaForCausalLM
-tokenizer = LlamaTokenizer.from_pretrained('MetaAligner/MetaAligner-HH-RLHF-7B', padding_side='left')
-model = LlamaForCausalLM.from_pretrained('MetaAligner/MetaAligner-HH-RLHF-7B', device_map='auto', torch_dtype=torch.bfloat16)
+tokenizer = LlamaTokenizer.from_pretrained(PATH_TO_MODEL, padding_side='left')
+model = LlamaForCausalLM.from_pretrained(PATH_TO_TOKENIZER, device_map='auto', torch_dtype=torch.bfloat16)
 device = torch.device("cuda:0" if torch.cuda.is_available() else "cpu")
 ```
 
