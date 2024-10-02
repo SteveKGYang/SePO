@@ -22,7 +22,7 @@ train_sft.py \
     --save_hf_model
 EOF
     # --wandb [WANDB_TOKENS]
-    # --use_wandb 85b307e786518dda002091933c29896ac1180232
+    # --use_wandb 
 
 if [[ ${1} != "slurm" ]]; then
     #export PATH=$HOME/.local/bin/:$PATH

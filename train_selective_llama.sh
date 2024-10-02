@@ -21,13 +21,12 @@ train_selective.py \
      --dataset_probs 1 \
      --flash_attn \
      --gradient_checkpointing \
-     --save_hf_model \
-     --use_wandb 85b307e786518dda002091933c29896ac1180232
+     --save_hf_model
 EOF
      # --wandb [WANDB_TOKENS]
      # --ipo [for IPO]
      # --label_smoothing 0.1 [for cDPO]
-     # --use_wandb 85b307e786518dda002091933c29896ac1180232
+     # --use_wandb
      # pretrain /mnt/iusers01/nactem01/g36374ky/scratch/FastChat/llama2-chat-13B
      # --pretrain /mnt/iusers01/nactem01/g36374ky/scratch/FastChat/llama2-chat-7B
 
